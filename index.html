@@ -1646,5 +1646,15 @@ const { useState, useEffect, useRef } = React;
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(React.createElement(App));
   </script>
+
+  <script>
+    if('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+          .then(r => console.log('SW registrato:', r.scope))
+          .catch(e => console.log('SW errore:', e));
+      });
+    }
+  </script>
 </body>
 </html>
