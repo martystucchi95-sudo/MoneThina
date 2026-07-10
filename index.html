@@ -12,8 +12,6 @@
   <link rel="manifest" href="./manifest.json"/>
   <link rel="icon" type="image/png" href="./icon-192.png"/>
   <link rel="apple-touch-icon" href="./icon-192.png"/>
-  <link rel="apple-touch-icon" sizes="192x192" href="./icon-192.png"/>
-  <link rel="apple-touch-icon" sizes="512x512" href="./icon-512.png"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
   <style>
@@ -298,6 +296,7 @@ function App() {
   const [editingGoal, setEditingGoal] = useState(null);
   const [confirmRec,  setConfirmRec]  = useState(null);
   const [depositGoal, setDepositGoal] = useState(null);
+  const [confirmPreview, setConfirmPreview] = useState(null); // ricorrente previsto da confermare
   // FAB mode: "tx" | "rec"
   const [fabMode, setFabMode] = useState(null);
 
@@ -721,12 +720,13 @@ function App() {
               const pool = q && searchScope==="all" ? transactions : monthTx;
               const filtered = q
                 ? pool.filter(t=>
+                    !t.skipped && (
                     (t.category||"").toLowerCase().includes(q) ||
                     (t.tag||"").toLowerCase().includes(q) ||
                     (t.note||"").toLowerCase().includes(q) ||
-                    String(t.amount).includes(q)
+                    String(t.amount).includes(q))
                   )
-                : monthTx;
+                : monthTx.filter(t=>!t.skipped);
               const showPreview = !q;
 
               if(filtered.length===0 && (!showPreview || recurringPreview.length===0))
@@ -761,14 +761,15 @@ function App() {
                   <>
                     <div style={{fontSize:11,color:C.muted,padding:"10px 0 4px",textAlign:"center",letterSpacing:0.5}}>— PREVISTI —</div>
                     {recurringPreview.map(r=>(
-                      <div key={r.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderBottom:`1px solid ${C.border}`,opacity:0.4}}>
+                      <div key={r.id} onClick={()=>{setConfirmPreview({rec:r, amount:String(r.amount), note:r.note||""});setModal("confirmPreview");}}
+                        style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderBottom:`1px solid ${C.border}`,opacity:0.45,cursor:"pointer"}}>
                         <div style={{width:38,height:38,borderRadius:12,background:r.type==="income"?"#F2F9F2":"#FDF2F2",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>
                           {r.type==="income"?"⬆️":"⬇️"}
                         </div>
                         <div style={{flex:1,minWidth:0}}>
                           <div style={{fontWeight:700,fontSize:14,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.category||"—"}</div>
                           {r.tag&&<div style={{fontSize:11,color:C.muted,marginTop:1}}>{r.tag}</div>}
-                          <div style={{fontSize:11,color:"#BBB",marginTop:1}}>🔁 previsto giorno {r.dayOfMonth}</div>
+                          <div style={{fontSize:11,color:"#BBB",marginTop:1}}>🔁 previsto giorno {r.dayOfMonth} · tocca per anticipare</div>
                         </div>
                         <div style={{fontWeight:700,color:r.type==="income"?C.sageDark:C.expense,fontSize:14,flexShrink:0}}>
                           {r.type==="income"?"+":"-"}{fmt(r.amount)}€
@@ -1568,6 +1569,51 @@ function App() {
         );
       })()}
 
+      {/* Conferma previsto */}
+      {modal==="confirmPreview"&&confirmPreview&&(()=>{
+        const r = confirmPreview.rec;
+        const viewKey = `${year}-${month}`;
+        const confirm = () => {
+          setTransactions(prev=>[...prev,{
+            id:uid(), recurringId:r.id, recurringMonth:viewKey,
+            type:r.type, amount:Number(confirmPreview.amount||r.amount),
+            category:r.category, tag:r.tag,
+            note:confirmPreview.note||r.note,
+            date:confirmPreview.date||today.toISOString().slice(0,10)
+          }]);
+          setConfirmPreview(null); setModal(null);
+        };
+        const skip = () => {
+          // Segna come saltato così non viene reinserito automaticamente
+          setTransactions(prev=>[...prev,{
+            id:uid(), recurringId:r.id, recurringMonth:viewKey,
+            type:r.type, amount:0, skipped:true,
+            category:r.category, tag:r.tag, note:"",
+            date:today.toISOString().slice(0,10)
+          }]);
+          setConfirmPreview(null); setModal(null);
+        };
+        return (
+          <Modal title="Previsto" onClose={()=>setModal(null)}>
+            <div style={{background:C.bg,borderRadius:14,padding:12,marginBottom:16}}>
+              <div style={{fontSize:14,fontWeight:600,color:C.text,marginBottom:2}}>🔁 {r.category}{r.tag?` · ${r.tag}`:""}</div>
+              <div style={{fontSize:12,color:C.muted}}>Previsto giorno {r.dayOfMonth} · {r.type==="income"?"+":"-"}{fmt(r.amount)}€</div>
+            </div>
+            <input style={{...inp,marginBottom:10}} type="number" placeholder={`Importo (${fmt(r.amount)}€)`}
+              value={confirmPreview.amount} onChange={e=>setConfirmPreview(c=>({...c,amount:e.target.value}))}/>
+            <input style={{...inp,marginBottom:10}} type="text" placeholder={`Nota${r.note?` (${r.note})`:""}`}
+              value={confirmPreview.note} onChange={e=>setConfirmPreview(c=>({...c,note:e.target.value}))}/>
+            <input style={{...inp,marginBottom:16}} type="date"
+              value={confirmPreview.date||today.toISOString().slice(0,10)}
+              onChange={e=>setConfirmPreview(c=>({...c,date:e.target.value}))}/>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={skip} title="Elimina questa occorrenza" style={{background:"#FDF2F2",border:"none",borderRadius:14,padding:"13px 16px",fontSize:18,cursor:"pointer",flexShrink:0}}>🗑️</button>
+              <Btn onClick={confirm} style={{flex:1}}>✓ Conferma</Btn>
+            </div>
+          </Modal>
+        );
+      })()}
+
       {/* Nota mese */}
       {modal==="monthNote"&&(()=>{
         const noteKey=`${year}-${month}`;
@@ -1648,14 +1694,9 @@ const { useState, useEffect, useRef } = React;
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(React.createElement(App));
   </script>
-
   <script>
     if('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js')
-          .then(r => console.log('SW registrato:', r.scope))
-          .catch(e => console.log('SW errore:', e));
-      });
+      window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
     }
   </script>
 </body>
