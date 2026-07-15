@@ -15,14 +15,14 @@
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
   <style>
-    *, *::before, *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-    html, body { margin: 0; padding: 0; background: #F7F6F3; font-family: 'DM Sans', sans-serif; overscroll-behavior: none; }
-    body { -webkit-overflow-scrolling: touch; }
-    input, select, textarea, button { font-family: inherit; -webkit-appearance: none; }
-    select { -webkit-appearance: none; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23999' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px !important; }
-    textarea { resize: vertical; }
-    ::-webkit-scrollbar { display: none; }
-    * { scrollbar-width: none; }
+    *,*::before,*::after{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+    html,body{margin:0;padding:0;background:#F7F6F3;font-family:'DM Sans',sans-serif;overscroll-behavior:none;}
+    body{-webkit-overflow-scrolling:touch;}
+    input,select,textarea,button{font-family:inherit;-webkit-appearance:none;}
+    select{-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23999' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:32px!important;}
+    textarea{resize:vertical;}
+    ::-webkit-scrollbar{display:none;}
+    *{scrollbar-width:none;}
   </style>
 </head>
 <body>
@@ -52,6 +52,44 @@ const load = (k,d) => { try { const v=localStorage.getItem(k); return v?JSON.par
 const save = (k,v) => { try { localStorage.setItem(k,JSON.stringify(v)); } catch {} };
 const uid = () => Date.now() + Math.random();
 const fmt = n => Number(n).toLocaleString("it-IT",{minimumFractionDigits:2,maximumFractionDigits:2});
+
+// ── IndexedDB per persistenza robusta ────────────────────────────────────────
+const DB_NAME = "MoneThina", DB_VERSION = 1, STORE = "data";
+let _db = null;
+
+function openDB() {
+  if(_db) return Promise.resolve(_db);
+  return new Promise((res,rej)=>{
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = e => e.target.result.createObjectStore(STORE);
+    req.onsuccess = e => { _db=e.target.result; res(_db); };
+    req.onerror = e => rej(e);
+  });
+}
+
+function idbSave(key, value) {
+  // Salva sia in localStorage (veloce) che in IndexedDB (persistente)
+  save(key, value);
+  openDB().then(db=>{
+    const tx = db.transaction(STORE,"readwrite");
+    tx.objectStore(STORE).put(JSON.stringify(value), key);
+  }).catch(()=>{});
+}
+
+function idbLoad(key, def) {
+  // Prima prova localStorage, poi IndexedDB come fallback
+  const ls = load(key, null);
+  if(ls !== null) return Promise.resolve(ls);
+  return openDB().then(db=>new Promise((res)=>{
+    const req = db.transaction(STORE,"readonly").objectStore(STORE).get(key);
+    req.onsuccess = e => {
+      const v = e.target.result;
+      if(v) { try { const parsed=JSON.parse(v); save(key,parsed); res(parsed); } catch { res(def); } }
+      else res(def);
+    };
+    req.onerror = () => res(def);
+  })).catch(()=>def);
+}
 
 // Calcola sfumature di un colore base per i tag
 function colorShades(hex, n) {
@@ -275,13 +313,25 @@ function App() {
   const [budgets, setBudgets]           = useState(()=>load("rspr3_budgets",{}));
   const [monthNotes, setMonthNotes]     = useState(()=>load("rspr3_notes",{}));
 
-  useEffect(()=>save("rspr3_tx",transactions),[transactions]);
-  useEffect(()=>save("rspr3_rec",recurring),[recurring]);
-  useEffect(()=>save("rspr3_goals",goals),[goals]);
-  useEffect(()=>save("rspr3_cats",categories),[categories]);
-  useEffect(()=>save("rspr3_appname",appName),[appName]);
-  useEffect(()=>save("rspr3_budgets",budgets),[budgets]);
-  useEffect(()=>save("rspr3_notes",monthNotes),[monthNotes]);
+  useEffect(()=>idbSave("rspr3_tx",transactions),[transactions]);
+  useEffect(()=>idbSave("rspr3_rec",recurring),[recurring]);
+  useEffect(()=>idbSave("rspr3_goals",goals),[goals]);
+  useEffect(()=>idbSave("rspr3_cats",categories),[categories]);
+  useEffect(()=>idbSave("rspr3_appname",appName),[appName]);
+  useEffect(()=>idbSave("rspr3_budgets",budgets),[budgets]);
+  useEffect(()=>idbSave("rspr3_notes",monthNotes),[monthNotes]);
+
+  // Recovery da IndexedDB se localStorage è vuoto (es. dopo svuotamento cache)
+  useEffect(()=>{
+    const keys = ["rspr3_tx","rspr3_rec","rspr3_goals","rspr3_cats","rspr3_appname","rspr3_budgets","rspr3_notes"];
+    const setters = [setTransactions,setRecurring,setGoals,setCategories,setAppName,setBudgets,setMonthNotes];
+    const defaults = [[],[],[],[],"MoneThina",{},{}];
+    keys.forEach((k,i)=>{
+      if(!localStorage.getItem(k)){
+        idbLoad(k, defaults[i]).then(v=>{ if(v && (Array.isArray(v)?v.length>0:Object.keys(v).length>0 || typeof v==="string")) setters[i](v); });
+      }
+    });
+  },[]);
 
   // Forms
   const emptyTx  = {type:"expense",amount:"",category:"",tag:"",note:"",date:today.toISOString().slice(0,10)};
@@ -1690,13 +1740,13 @@ function App() {
   );
 }
 
-const { useState, useEffect, useRef } = React;
-const root = ReactDOM.createRoot(document.getElementById('root'));
+const {useState,useEffect,useRef}=React;
+const root=ReactDOM.createRoot(document.getElementById('root'));
 root.render(React.createElement(App));
   </script>
   <script>
-    if('serviceWorker' in navigator) {
-      window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
+    if('serviceWorker' in navigator){
+      window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js'));
     }
   </script>
 </body>
