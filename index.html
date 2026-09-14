@@ -321,16 +321,55 @@ function App() {
   useEffect(()=>idbSave("rspr3_budgets",budgets),[budgets]);
   useEffect(()=>idbSave("rspr3_notes",monthNotes),[monthNotes]);
 
-  // Recovery da IndexedDB se localStorage è vuoto (es. dopo svuotamento cache)
+  // Chiedi storage persistente per evitare che Android cancelli i dati
+  useEffect(()=>{
+    if(navigator.storage && navigator.storage.persist){
+      navigator.storage.persisted().then(p=>{
+        if(!p) navigator.storage.persist();
+      });
+    }
+    // Auto-backup settimanale su localStorage con timestamp
+    const lastBackup = localStorage.getItem("rspr3_lastBackup");
+    const now = Date.now();
+    const weekMs = 7*24*60*60*1000;
+    if(!lastBackup || now - Number(lastBackup) > weekMs){
+      // Salva snapshot completo
+      setTimeout(()=>{
+        const snap = {transactions,recurring,goals,categories,appName,budgets,monthNotes,savedAt:new Date().toISOString()};
+        try { localStorage.setItem("rspr3_snapshot", JSON.stringify(snap)); localStorage.setItem("rspr3_lastBackup", String(now)); } catch{}
+        idbSave("rspr3_snapshot", snap);
+      }, 2000);
+    }
+  },[]);
+
+  // Recovery da IndexedDB + snapshot se localStorage è vuoto
   useEffect(()=>{
     const keys = ["rspr3_tx","rspr3_rec","rspr3_goals","rspr3_cats","rspr3_appname","rspr3_budgets","rspr3_notes"];
     const setters = [setTransactions,setRecurring,setGoals,setCategories,setAppName,setBudgets,setMonthNotes];
     const defaults = [[],[],[],[],"MoneThina",{},{}];
-    keys.forEach((k,i)=>{
-      if(!localStorage.getItem(k)){
-        idbLoad(k, defaults[i]).then(v=>{ if(v && (Array.isArray(v)?v.length>0:Object.keys(v).length>0 || typeof v==="string")) setters[i](v); });
-      }
-    });
+    const allEmpty = keys.every(k=>!localStorage.getItem(k));
+    if(allEmpty){
+      // Prova prima IndexedDB
+      Promise.all(keys.map((k,i)=>idbLoad(k,defaults[i]))).then(values=>{
+        const hasData = values.some((v,i)=>Array.isArray(v)?v.length>0:typeof v==="object"?Object.keys(v).length>0:v!==defaults[i]);
+        if(hasData){
+          values.forEach((v,i)=>setters[i](v));
+        } else {
+          // Prova lo snapshot
+          idbLoad("rspr3_snapshot",null).then(snap=>{
+            if(snap && snap.transactions){
+              setTransactions(snap.transactions||[]);
+              setRecurring(snap.recurring||[]);
+              setGoals(snap.goals||[]);
+              setCategories(snap.categories||[]);
+              if(snap.appName) setAppName(snap.appName);
+              if(snap.budgets) setBudgets(snap.budgets);
+              if(snap.monthNotes) setMonthNotes(snap.monthNotes);
+            }
+          });
+        }
+      });
+    }
   },[]);
 
   // Forms
@@ -352,13 +391,13 @@ function App() {
 
   // ── Auto-add recurring ──
   useEffect(()=>{
+    if(recurring.length===0) return; // aspetta che i dati siano caricati
     const todayD = today.getDate();
     const nowKey = `${today.getFullYear()}-${today.getMonth()}`;
 
     // Ricorrenti normali
     recurring.filter(r=>!r.paused).forEach(rec=>{
       const startDate = rec.startDate ? new Date(rec.startDate) : null;
-      // Non inserire se la data di inizio è nel futuro
       if(startDate && startDate > today) return;
       const shouldFire = shouldFireToday(rec, today);
       if(shouldFire){
@@ -392,7 +431,7 @@ function App() {
         }
       }
     });
-  },[]);
+  },[recurring, goals]); // si riattiva quando recurring/goals sono caricati
 
   function shouldFireToday(rec, date) {
     const d = date.getDate();
