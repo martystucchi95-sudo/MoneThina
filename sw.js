@@ -1,4 +1,4 @@
-const CACHE_NAME='monethina-v5';
+const CACHE_NAME='monethina-v6';
 const ASSETS=['./', './index.html','./manifest.json','./icon-192.png','./icon-512.png',
   'https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js',

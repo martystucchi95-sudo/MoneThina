@@ -450,7 +450,11 @@ function App() {
   }
 
   // ── Computed ──
-  const monthTx = transactions.filter(t=>{ const d=new Date(t.date); return d.getMonth()===month&&d.getFullYear()===year; });
+  const todayStr = today.toISOString().slice(0,10);
+  const allMonthTx = transactions.filter(t=>{ const d=new Date(t.date); return d.getMonth()===month&&d.getFullYear()===year; });
+  // Movimenti futuri inseriti manualmente (non ricorrenti, non obiettivi) → previsti finché non arriva la data
+  const futureOneOff = allMonthTx.filter(t=>!t.recurringId && !t.goalId && !t.skipped && t.date > todayStr);
+  const monthTx = allMonthTx.filter(t=>!(!t.recurringId && !t.goalId && !t.skipped && t.date > todayStr));
   const totalIncome  = monthTx.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0);
   const totalExpense = monthTx.filter(t=>t.type==="expense").reduce((s,t)=>s+t.amount,0);
   const balance = totalIncome - totalExpense;
@@ -496,9 +500,12 @@ function App() {
     return true;
   }) : [];
 
-  const previewIncome  = recurringPreview.filter(r=>r.type==="income").reduce((s,r)=>s+Number(r.amount),0);
-  const previewExpense = recurringPreview.filter(r=>r.type==="expense").reduce((s,r)=>s+Number(r.amount),0);
+  const previewIncome  = recurringPreview.filter(r=>r.type==="income").reduce((s,r)=>s+Number(r.amount),0)
+    + futureOneOff.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0);
+  const previewExpense = recurringPreview.filter(r=>r.type==="expense").reduce((s,r)=>s+Number(r.amount),0)
+    + futureOneOff.filter(t=>t.type==="expense").reduce((s,t)=>s+t.amount,0);
   const forecastBalance = balance + previewIncome - previewExpense;
+  const previewCount = recurringPreview.length + futureOneOff.length;
 
   const annualData = Array.from({length:12},(_,i)=>{
     const inc=transactions.filter(t=>{const d=new Date(t.date);return d.getFullYear()===year&&d.getMonth()===i&&t.type==="income";}).reduce((s,t)=>s+t.amount,0);
@@ -744,13 +751,13 @@ function App() {
               <div style={{fontSize:34,fontWeight:700,color:balance>=0?C.balanceGreen:C.expense,letterSpacing:-1}}>{balance>=0?"+":""}{fmt(balance)} €</div>
               <button onClick={()=>setModal("monthNote")} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,opacity:monthNotes[`${year}-${month}`]?1:0.3,padding:0,lineHeight:1}}>📝</button>
             </div>
-            {recurringPreview.length>0 && (
+            {previewCount>0 && (
               <div style={{marginTop:6,display:"flex",alignItems:"center",gap:6}}>
                 <span style={{fontSize:11,color:C.muted}}>Previsto:</span>
                 <span style={{fontSize:13,fontWeight:600,color:(forecastBalance>=0?C.balanceGreen:C.expense),opacity:0.65}}>
                   {forecastBalance>=0?"+":""}{fmt(forecastBalance)} €
                 </span>
-                <span style={{fontSize:10,color:C.muted,opacity:0.7}}>({recurringPreview.length} ricorrenti attesi)</span>
+                <span style={{fontSize:10,color:C.muted,opacity:0.7}}>({previewCount} attesi)</span>
               </div>
             )}
             <div style={{display:"flex",gap:10,marginTop:14}}>
@@ -818,7 +825,7 @@ function App() {
                 : monthTx.filter(t=>!t.skipped);
               const showPreview = !q;
 
-              if(filtered.length===0 && (!showPreview || recurringPreview.length===0))
+              if(filtered.length===0 && (!showPreview || previewCount===0))
                 return <div style={{textAlign:"center",color:C.muted,padding:"20px 0",fontSize:14}}>
                   {q ? "Nessun risultato 🔍" : "Nessun movimento 🌿"}<br/>
                   {!q && <span style={{fontSize:12}}>Premi + per aggiungere</span>}
@@ -846,10 +853,10 @@ function App() {
                   )}
                 </div>
                 ))}
-                {showPreview && recurringPreview.length>0&&(
+                {showPreview && previewCount>0&&(
                   <>
                     <div style={{fontSize:11,color:C.muted,padding:"10px 0 4px",textAlign:"center",letterSpacing:0.5}}>— PREVISTI —</div>
-                    {recurringPreview.map(r=>(
+                    {[...recurringPreview].sort((a,b)=>a.dayOfMonth-b.dayOfMonth).map(r=>(
                       <div key={r.id} onClick={()=>{setConfirmPreview({rec:r, amount:String(r.amount), note:r.note||""});setModal("confirmPreview");}}
                         style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderBottom:`1px solid ${C.border}`,opacity:0.45,cursor:"pointer"}}>
                         <div style={{width:38,height:38,borderRadius:12,background:r.type==="income"?"#F2F9F2":"#FDF2F2",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>
@@ -863,6 +870,23 @@ function App() {
                         <div style={{fontWeight:700,color:r.type==="income"?C.sageDark:C.expense,fontSize:14,flexShrink:0}}>
                           {r.type==="income"?"+":"-"}{fmt(r.amount)}€
                         </div>
+                      </div>
+                    ))}
+                    {[...futureOneOff].sort((a,b)=>new Date(a.date)-new Date(b.date)).map(tx=>(
+                      <div key={tx.id} onClick={()=>{setEditingTx(tx);setTxForm({type:tx.type,amount:String(tx.amount),category:tx.category||"",tag:tx.tag||"",note:tx.note||"",date:tx.date});setModal("addTx");}}
+                        style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderBottom:`1px solid ${C.border}`,opacity:0.45,cursor:"pointer"}}>
+                        <div style={{width:38,height:38,borderRadius:12,background:tx.type==="income"?"#F2F9F2":"#FDF2F2",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>
+                          {tx.type==="income"?"⬆️":"⬇️"}
+                        </div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontWeight:700,fontSize:14,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{tx.category||"—"}</div>
+                          {tx.tag&&<div style={{fontSize:11,color:C.muted,marginTop:1}}>{tx.tag}</div>}
+                          <div style={{fontSize:11,color:"#BBB",marginTop:1}}>📅 previsto {new Date(tx.date).toLocaleDateString("it-IT")} · tocca per modificare</div>
+                        </div>
+                        <div style={{fontWeight:700,color:tx.type==="income"?C.sageDark:C.expense,fontSize:14,flexShrink:0}}>
+                          {tx.type==="income"?"+":"-"}{fmt(tx.amount)}€
+                        </div>
+                        <button onClick={e=>{e.stopPropagation();deleteTx(tx);}} style={{background:"none",border:"none",fontSize:13,cursor:"pointer",color:C.muted,padding:4,flexShrink:0}}>✕</button>
                       </div>
                     ))}
                   </>
