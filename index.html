@@ -467,9 +467,11 @@ function App() {
     expByCat[k].value+=t.amount;
     if(t.tag) expByCat[k].tags[t.tag]=(expByCat[k].tags[t.tag]||0)+t.amount;
   });
-  const pieData = Object.entries(expByCat).map(([label,d],i)=>({
-    label, value:d.value, tags:d.tags, color:PIE_COLORS[i%PIE_COLORS.length]
-  }));
+  const expCatList = categories.filter(c=>c.type==="expense");
+  const pieData = Object.entries(expByCat).map(([label,d])=>{
+    const idx = expCatList.findIndex(c=>c.name===label);
+    return { label, value:d.value, tags:d.tags, color:PIE_COLORS[(idx>=0?idx:0)%PIE_COLORS.length] };
+  });
 
   const pieDataInEx = [
     ...(totalExpense>0?[{label:"Uscite",value:totalExpense,color:C.expense}]:[]),
@@ -1160,7 +1162,11 @@ function App() {
 
           {/* Trend spesa per categoria */}
           {(()=>{
-            const allExpCats = [...new Set(transactions.filter(t=>t.type==="expense"&&t.category).map(t=>t.category))];
+            const txExpCatNames = [...new Set(transactions.filter(t=>t.type==="expense"&&t.category).map(t=>t.category))];
+            // Ordina le categorie secondo l'ordine fisso di creazione (stesso di torta/budget/picker)
+            const fixedExpCatOrder = categories.filter(c=>c.type==="expense").map(c=>c.name);
+            const allExpCats = fixedExpCatOrder.filter(c=>txExpCatNames.includes(c))
+              .concat(txExpCatNames.filter(c=>!fixedExpCatOrder.includes(c)));
             if(allExpCats.length===0) return null;
             const selCatName = trendCat||allExpCats[0];
             const trendData = Array.from({length:12},(_,i)=>{
@@ -1172,7 +1178,8 @@ function App() {
               return {label:MONTHS[i].slice(0,3), val};
             });
             const maxVal = Math.max(...trendData.map(d=>d.val),1);
-            const catColor = PIE_COLORS[allExpCats.indexOf(selCatName)%PIE_COLORS.length];
+            const fixedIdx = categories.filter(c=>c.type==="expense").findIndex(c=>c.name===selCatName);
+            const catColor = PIE_COLORS[(fixedIdx>=0?fixedIdx:0)%PIE_COLORS.length];
             const avg = trendData.filter(d=>d.val>0).reduce((s,d)=>s+d.val,0) / Math.max(trendData.filter(d=>d.val>0).length,1);
             const catTags = categories.find(c=>c.name===selCatName&&c.type==="expense")?.tags||[];
 
@@ -1190,13 +1197,17 @@ function App() {
                 <div style={{fontWeight:700,fontSize:14,marginBottom:12,color:C.text}}>📈 Trend spesa</div>
                 {/* Selezione categoria */}
                 <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:catTags.length>0?8:16}}>
-                  {allExpCats.map((cat,i)=>(
-                    <button key={cat} onClick={()=>{setTrendCat(cat);setTrendTooltip(null);setTrendTag("");}} style={{padding:"5px 12px",borderRadius:14,border:"none",fontFamily:"inherit",fontSize:12,fontWeight:600,cursor:"pointer",
-                      background:(trendCat||allExpCats[0])===cat?PIE_COLORS[i%PIE_COLORS.length]:C.border,
-                      color:(trendCat||allExpCats[0])===cat?"#fff":C.text}}>
-                      {cat}
-                    </button>
-                  ))}
+                  {allExpCats.map(cat=>{
+                    const ci = categories.filter(c=>c.type==="expense").findIndex(c=>c.name===cat);
+                    const col = PIE_COLORS[(ci>=0?ci:0)%PIE_COLORS.length];
+                    return (
+                      <button key={cat} onClick={()=>{setTrendCat(cat);setTrendTooltip(null);setTrendTag("");}} style={{padding:"5px 12px",borderRadius:14,border:"none",fontFamily:"inherit",fontSize:12,fontWeight:600,cursor:"pointer",
+                        background:(trendCat||allExpCats[0])===cat?col:C.border,
+                        color:(trendCat||allExpCats[0])===cat?"#fff":C.text}}>
+                        {cat}
+                      </button>
+                    );
+                  })}
                 </div>
                 {/* Chip tag */}
                 {catTags.length>0&&(
